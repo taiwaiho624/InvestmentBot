@@ -1,3 +1,4 @@
+import pandas as pd
 import yfinance as yf
 from utils import *
 
@@ -12,6 +13,11 @@ class MarketFeeder:
         
         hist["SMA"] = hist["Close"].rolling(window=sma_rolling_period).mean()
 
+        hist['Date'] = hist.index
+
+        hist['Date'] = pd.to_datetime(hist['Date']).dt.strftime('%Y%m')
+
+        hist.index = hist['Date']
         return hist
 
     def get_current_price(self, ticker):

@@ -19,11 +19,11 @@ class ValueAverageTradingBot:
         self.month_return = self.ytd_return ** (1 / self.sma_rolling_period)
 
     def _init_balance(self):
-        columns = ['date', 'cv_before', 'sv_before', 'cv_add','cv_after','sv_after']
-        df = pd.read_csv('data/balance.csv', names=columns, header=None, skiprows=[0])
+        columns = ['date', 'cv_before', 'sv_before', 'cv_add','cv_after','sv_after', 'target_value']
+        df = pd.read_csv('balance.csv', names=columns, header=None, skiprows=[0])
         df[columns[1:]] = df[columns[1:]].astype(float)
 
-        self.df = df
+        self.df = df 
         self.stock_value_before = df.at[df.index[-1], 'sv_before']
         self.cash_value_before = df.at[df.index[-1], 'cv_before']
         self.cash_value = self.cash_value_before + df.at[df.index[-1], 'cv_add']
@@ -33,8 +33,8 @@ class ValueAverageTradingBot:
         for index, row in df.iterrows():
             self.target_value = self.target_value * self.month_return + row['cv_add']
             df.at[df.index[index], 'target_value'] = self.target_value
-
-    def signal(self):
+        
+    def signal(self, price=None, record=False):
         hist = self.market_feeder.get_last_prices(ticker=self.underlying, period=self.period, interval=self.interval, sma_rolling_period=self.sma_rolling_period)
         
         if len(hist) < 2:
@@ -47,7 +47,7 @@ class ValueAverageTradingBot:
             print('Action[CLEAR] Ticker[{0}]')
             
         else:
-            current_price = self.market_feeder.get_current_price(self.ticker)
+            current_price = self.market_feeder.get_current_price(self.ticker)  if price is None else price
 
             # If the stock value is not up to target value, buy up to the target value 
             if self.stock_value_before < self.target_value:
@@ -76,12 +76,12 @@ class ValueAverageTradingBot:
 
                 self.df.at[self.df.index[-1], 'cv_after'] = self.cash_value_before + self.cash_value + (sell_qty * current_price)
                 self.df.at[self.df.index[-1], 'sv_after'] = self.stock_value_before - (sell_qty * current_price)
-                
-        print (self.df)
+        
+        if record:
+            self.df.to_csv("balance.csv", index=False)
 
-if __name__ == '__main__':
-    value_average_trading_bot = ValueAverageTradingBot(MarketFeeder())
-    value_average_trading_bot.signal()
+        print(self.df)
+
 
 
 

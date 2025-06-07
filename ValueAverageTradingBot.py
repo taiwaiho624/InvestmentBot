@@ -1,118 +1,291 @@
-from MarketFeeder import MarketFeeder
-import math
-import pandas as pd
 import datetime as datetime
 from datetime import date
-from dateutil.relativedelta import relativedelta
-from configparser import ConfigParser
+from utils import *
+import statistics
+from define import *
+import pandas as pd
+
+class Stat:
+    def __init__(self):
+        self.events = {}
+
+    def _get_ytd_for_event(self, event):
+        event_year = int(event.date[0:4])
+        event_previous_year = str(event_year - 1)
+        ref_event = None
+        first_event = None
+        is_first_event_set = False
+        for date, previous_event in self.events.items():
+            if is_first_event_set == False:
+                first_event = previous_event
+                is_first_event_set = True
+            if date[0:6] == f"{event_previous_year}12":
+                ref_event = previous_event
+                break
+        if ref_event == None:
+            ref_event = first_event
+        if ref_event != None:
+            ytd = (event.total_value - ref_event.total_value) / ref_event.total_value * 100
+            return ytd
+        return 0
+
+    def dump(self):
+        self._get_stat()
+        print(f"Cash Raio Median[{self.median_cash_ratio}] Cash Raio Mean[{self.mean_cash_ratio}] Max YTD Drawdown[{self.max_ytd_drawdown}]")
+
+    def _get_stat(self):
+        cash_ratio = []
+        ytd = []
+        returns = []
+        for date, event in self.events.items():
+            if event.state == State.WAIT_OUT:
+                cash_ratio.append(event.cash_ratio)
+            ytd.append(event.ytd)
+            returns.append(event.total_return)
+        self.median_cash_ratio = statistics.median(cash_ratio)
+        self.mean_cash_ratio = statistics.mean(cash_ratio)
+        self.max_ytd_drawdown = sorted(ytd)[0]
+
+    def add_event(self, event):
+        self.events[event.date] = event
 
 class ValueAverageTradingBot:
     def __init__(self, market_feeder):
         self.market_feeder = market_feeder
+        
+        # Algo
+        self.underlying_ticker = 'QQQ'
+        self.deriv_ticker = 'QLD'
+        self.cash_growth = 1.03 ** (1 / 12)
+        self.buy_in_threshold = 1.04
+        self.growth = 1.22 ** (1 / 12)
+        self.init_cash = 5000
+        self.cash_in_per_month = 1000
+        self.tp_increment = 0.1        
+        self.tp1_max = 10
+        self.tp2_max = 3
+        
+        # Account State
+        self.target_value = None # Adjust Per Month
+        self.cash = None
+        self.cost = None
+        self.stock = 0
+        self.number_of_stock = 0
+        self.state = State.WAIT_IN
+        self.wait_in_and_previous_is_higher_than_sma = False
+        self.tp1_counter = 0
+        self.tp2_counter = 0
+
+        # Stat
+        self.current_month = ''
+
+        # Data
+        self.hist_underlying_month = self.market_feeder.get_last_prices(ticker=self.underlying_ticker, period='max', interval='1mo', sma_rolling_period=12)
+        self.hist_underlying_day = self.market_feeder.get_last_prices(ticker=self.underlying_ticker, period='max', interval='1d')
+        self.hist_deriv = self.market_feeder.get_last_prices(ticker=self.deriv_ticker, period='max', interval='1d')
+        self.stat = Stat()
+
+        self.file_name = None
+        self.commit_file = False
+
+    def buy(self, number_of_stocks, price):
+        self.number_of_stock += number_of_stocks
+        self.stock = self.number_of_stock * price
+        self.cash -= number_of_stocks * price
+
+    def sell(self, number_of_stocks, price):
+        self.number_of_stock -= number_of_stocks
+        self.stock = self.number_of_stock * price
+        self.cash += number_of_stocks * price
+
+    def action(self, action, operation_price):
+        number_of_stocks = 0
+        side = Side.HOLD
+        if action == Action.BUY_UP_TO or action == Action.ENRTRY:        
+            value_to_buy = min((self.target_value - self.stock), self.cash)
+            number_of_stocks = int(value_to_buy / operation_price)
+            self.buy(number_of_stocks, operation_price)
+            side = Side.BUY
+        elif action == Action.TAKE_PROF1 or action == Action.TAKE_PROF2:
+            if action == Action.TAKE_PROF1:
+                self._increment_tp1_counter()
+                value_to_sell = (self.stock - self.target_value) * self.tp_increment * self.tp1_counter
+            elif action == Action.TAKE_PROF2:
+                self._increment_tp2_counter()
+                value_to_sell = self.stock * self.tp_increment * self.tp2_counter
+            number_of_stocks = int(value_to_sell / operation_price)
+            self.sell(number_of_stocks, operation_price)
+            side = Side.SELL
+        elif action == Action.SELL_HALF:
+            number_of_stocks = int(self.number_of_stock / 2)
+            self.sell(number_of_stocks, operation_price)
+            side = Side.SELL
+        elif action == Action.SELL_ALL:
+            self._reset_tp_counter()
+            number_of_stocks = self.number_of_stock
+            self.sell(number_of_stocks, operation_price)
+            side = Side.SELL
+
+        return Event(action, operation_price, f"{side.name:<5} {number_of_stocks}@{operation_price:.3f}")
+
+    def _reset_tp_counter(self):
+        self.tp1_counter = 0
+        self.tp2_counter = 0
+
+    def _increment_tp1_counter(self):
+        self.tp1_counter += 1
+        if self.tp1_counter > self.tp1_max:
+            self.tp1_counter = self.tp1_max
+
+    def _increment_tp2_counter(self):
+        self.tp2_counter +=1
+        if self.tp2_counter > self.tp2_max:
+            self.tp2_counter = self.tp2_max
     
-        self._init_strategy()
-        self._init_balance()
+    def _adjust_account_per_month(self):
+        if self.state != State.WAIT_IN: 
+            self.target_value += self.cash_in_per_month
+        self.cash += self.cash_in_per_month
+        self.cost += self.cash_in_per_month
 
-        self.hist = self.market_feeder.get_last_prices(ticker=self.underlying, period=self.period, interval=self.interval, sma_rolling_period=self.sma_rolling_period)
+    def _init_from_file(self):
+        try:
+            data = pd.read_excel(self.file_name).to_dict(orient='records')[-1]
+            self.target_value = data['目標市值']
+            self.cash = data['現金']
+            self.cost = data['成本']
+            self.stock = data['股票市值']
+            self.number_of_stock = data['股票數量']
+            self.state = get_state_from_string(data['Current State'])
+            self.wait_in_and_previous_is_higher_than_sma = data['等入市-上月高於sma']
+            self.tp1_counter = data['TP1 Counter']
+            self.tp2_counter = data['TP2 Counter']
+            self.current_month = get_month_by_day(str(data['日期']))
+            self.latest_processed_date = data['日期']
+        except FileNotFoundError:
+            print(f"[E] File {self.file_name} does not exist. Init Account with {self.init_cash}")
+            self.target_value = self.init_cash
+            self.cash = self.init_cash
+            self.cost = self.init_cash
+
+    def check(self, trading_day, operation_price=None):
+        month = get_month_by_day(trading_day)
+        previous_month = get_previous_month_by_day(trading_day)
+        previous_month_sma = self.hist_underlying_month[previous_month]['SMA']
+        previous_month_close = self.hist_underlying_month[previous_month]['Close']
+        try:
+            underlying_price_open = self.hist_underlying_day[trading_day]['Open']
+            underlying_price_low = self.hist_underlying_day[trading_day]['Low']
+            underlying_price_high = self.hist_underlying_day[trading_day]['High']
+        except:
+            print(f"[E] {trading_day} is not a trading day")
+            return
+
+        deriv_price_high = self.hist_deriv[trading_day]['High']
+        deriv_price_open = self.hist_deriv[trading_day]['Open']
+        deriv_price_low = self.hist_deriv[trading_day]['Low']
+
+        #daily operation
+        self.stock = self.number_of_stock * deriv_price_open
         
-    def _init_strategy(self):
-        config = ConfigParser()   
-        config.read('config.ini')
+        event = None
+        if month != self.current_month: #first day of a month
+            if self.state != State.WAIT_IN:
+                self.target_value = self.target_value * self.growth #Only grow target value when it is above 12 month sma
+                # self.cash = self.cash * self.cash_growth
 
-        self.ticker = config.get('Strategy', 'ticker')
-        self.underlying = config.get('Strategy', 'underlying')
-        self.period = config.get('Strategy', 'period')
-        self.interval = config.get('Strategy', 'interval')
-        self.sma_rolling_period = int(config.get('Strategy', 'sma_rolling_period'))
-        self.ytd_return = float(config.get('Strategy', 'ytd_return'))
-        self.month_return = self.ytd_return ** (1 / self.sma_rolling_period)
+            self._adjust_account_per_month()
 
-    def _init_balance(self):
-        columns = ['date', 'cv_before', 'sv_before', 'cv_add','cv_after','sv_after', 'target_value']
-        df = pd.read_csv('balance.csv', names=columns, header=None, skiprows=[0])
-        df[columns[1:]] = df[columns[1:]].astype(float)
-
-        self.df = df 
-        self.stock_value_before = df.at[df.index[-1], 'sv_before']
-        self.cash_value_before = df.at[df.index[-1], 'cv_before']
-        self.cash_value = self.cash_value_before + df.at[df.index[-1], 'cv_add']
-        
-        self.target_value = 0
-
-        for index, row in df.iterrows():
-            self.target_value = self.target_value * self.month_return + row['cv_add']
-            df.at[df.index[index], 'target_value'] = self.target_value
-        
-        total_cost = 0
-
-        for index, row in df.iterrows():
-            total_cost = total_cost + row['cv_add']
-            df.at[df.index[index], 'total_cost'] = self.target_value
-
-    def _get_x_month_prices(self, reference_date, delta):
-        first_date_of_last_month = date(reference_date.year, reference_date.month, 1) + relativedelta(months=delta)
-        key = '{0}{1}'.format(first_date_of_last_month.year, first_date_of_last_month.month)
-        return self.hist.loc[[key]]
-
-
-    def signal(self, price=None, record=False, date=datetime.datetime.now(), row_index=-1):
-        previous_price = self._get_x_month_prices(date, -1)
-        previous_close = previous_price['Close'][-1]
-        previous_sma = previous_price['SMA'][-1]
-
-        # Check if previous month close price is below the 12 month sma
-        print('Date[{0}] Month Close[{1}] SMA-{2}[{3}]'.format(previous_price.index[-1], previous_close, self.sma_rolling_period, previous_sma))
-        
-        if previous_close < previous_sma:
-            # Clear all the position
-            print('Action[CLEAR] Ticker[{0}] Reason[{1}]'.format(self.ticker, "Month Close is below SMA"))
-            
-        else:
-            current_price = None
-
-            if price is not None:
-                current_price = price
-            elif datetime.datetime.now().month == date.month and datetime.datetime.now().year == date.year:
-                current_price = self.market_feeder.get_current_price(self.ticker)
-            else:
-                next_price = self._get_x_month_prices(date, 1)
-                current_price = next_price['Open'][-1]
-
-            # If the stock value is not up to target value, buy up to the target value 
-            if self.stock_value_before < self.target_value:
-                value_diff = self.target_value - self.stock_value_before
-
-                fill_value = min(value_diff, self.cash_value)
-
-                buy_qty = math.floor(fill_value / current_price)
-
-                if buy_qty == 0:
-                    print('Action[NO] Ticker[{0}] Current Price[{1}] Current Cash[{2}] Diff from target value [{3}]'.format(self.ticker, current_price, self.cash_value, value_diff))
-                    
+            if self.state == State.WAIT_IN:
+                if underlying_price_open > (previous_month_sma * self.buy_in_threshold):
+                    if self.stock < self.target_value:
+                        self.state = State.WAIT_OUT
+                        self.wait_in_and_previous_is_higher_than_sma = False
+                        operation_price = deriv_price_open if operation_price == None else operation_price
+                        event = self.action(Action.ENRTRY, operation_price)
+                elif previous_month_close > previous_month_sma:
+                    self.wait_in_and_previous_is_higher_than_sma = True
+            elif self.state == State.WAIT_OUT or self.state == State.SL_ONE:
+                if underlying_price_open > previous_month_sma:
+                    if self.state == State.SL_ONE:
+                        self.state = State.WAIT_OUT
+                    if self.tp1_counter == 10:
+                        operation_price = deriv_price_open if operation_price == None else operation_price
+                        event = self.action(Action.TAKE_PROF2, operation_price)
+                    elif self.stock < self.target_value:
+                        operation_price = deriv_price_open if operation_price == None else operation_price
+                        event = self.action(Action.BUY_UP_TO, operation_price)
+                    else:
+                        operation_price = deriv_price_open if operation_price == None else operation_price
+                        event = self.action(Action.TAKE_PROF1, operation_price)
                 else:
-                    print('Action[BUY] Ticker[{0}] Current Price[{1}] Quantity[{2}] Reason[{3}]'.format(self.ticker, current_price, buy_qty, "To Meet Target Value"))
+                    # sell all
+                    self.state = State.WAIT_IN
+                    operation_price = deriv_price_open if operation_price == None else operation_price
+                    event = self.action(Action.SELL_ALL, operation_price)
+            
+            if event == None:
+                operation_price = deriv_price_open if operation_price == None else operation_price
+                event = self.action(Action.NO_ACTION, operation_price)
+    
+            self.current_month = month
 
-                    self.df.at[self.df.index[row_index], 'cv_after'] = self.cash_value - (buy_qty * current_price)
-                    self.df.at[self.df.index[row_index], 'sv_after'] = self.stock_value_before + (buy_qty * current_price)
-
-            # If the stock value is over target value, sell off to the target value 
-            else:
-                value_diff = self.stock_value_before - self.target_value
-
-                sell_qty = math.ceil(value_diff / current_price)
-
-                print('Action[SELL] Ticker[{0}] Current Price[{1}] Quantity[{2}] Reason[{3}]'.format(self.ticker, current_price, sell_qty, "Take Profit"))
-
-                self.df.at[self.df.index[row_index], 'cv_after'] = self.cash_value + (sell_qty * current_price)
-                self.df.at[self.df.index[row_index], 'sv_after'] = self.stock_value_before - (sell_qty * current_price)
+        if self.state == State.WAIT_OUT and underlying_price_low < previous_month_sma:
+            self.state = State.SL_ONE
+            operation_price = deriv_price_low if operation_price == None else operation_price
+            event = self.action(Action.SELL_HALF, operation_price)
         
-        if record:
-            self.df.to_csv("balance.csv", index=False, float_format='%.0f', columns=['date', 'cv_before', 'sv_before', 'cv_add','cv_after','sv_after', 'target_value'])
+        if self.state == State.WAIT_IN and self.wait_in_and_previous_is_higher_than_sma == True and underlying_price_high > (previous_month_sma * self.buy_in_threshold):
+            self.state = State.WAIT_OUT
+            self.wait_in_and_previous_is_higher_than_sma = False
+            operation_price = deriv_price_high if operation_price == None else operation_price
+            event = self.action(Action.ENRTRY, operation_price)
 
-        print(self.df)
+        if event != None:
+            event.date = trading_day
+            event.target_value = self.target_value
+            event.stock = self.stock
+            event.cash = self.cash
+            event.number_of_stocks = self.number_of_stock
+            event.cost = self.cost
+            event.state = self.state
+            event.tp1_counter = self.tp1_counter
+            event.tp2_counter = self.tp2_counter
+            event.wait_in_and_previous_is_higher_than_sma = self.wait_in_and_previous_is_higher_than_sma
+            
+            event.previous_month_sma = previous_month_sma
+            event.previous_month_close = previous_month_close
+            event.underlying_price_open = underlying_price_open
+            event.underlying_price_low = underlying_price_low
+            event.underlying_price_high = underlying_price_high
+            event.deriv_price_high = deriv_price_high
+            event.deriv_price_open = deriv_price_open
+            event.deriv_price_low =  deriv_price_low
+            self.stat.add_event(event)
 
-    def replay(self):
-        pass
+            print(event)
+            if self.file_name != None and self.commit_file == True:
+                event.to_file(self.file_name)
 
+    def normal(self, trading_day, operation_price=None):
+        if self.file_name != None:
+            self._init_from_file()
+        
+        if int(self.latest_processed_date) > int(trading_day):
+            print(f"[E] Requested date[{trading_day}] is before the latestest processed date[{self.latest_processed_date}]. Exit")
+            return
 
+        self.check(trading_day, operation_price)
+
+    def replay(self, start_date, end_date=date.today().strftime('%Y%m%d')):
+        self.target_value = self.init_cash
+        self.cash = self.init_cash
+        self.cost = self.init_cash
+        for trading_day, _ in self.hist_underlying_day.items():
+            if int(trading_day) < int(start_date) or int(trading_day) > int(end_date):
+                continue
+            
+            self.check(trading_day)
+
+        self.stat.dump()
 

@@ -6,19 +6,21 @@ class MarketFeeder:
     def __init__(self):
         pass
     
-    def get_last_prices(self, ticker, period, interval, sma_rolling_period):
+    def get_last_prices(self, ticker, period, interval, sma_rolling_period=None):
         instrument = yf.Ticker(ticker)
 
         hist = instrument.history(period=period, interval=interval)
         
-        hist["SMA"] = hist["Close"].rolling(window=sma_rolling_period).mean()
+        if sma_rolling_period != None:
+            hist["SMA"] = hist["Close"].rolling(window=sma_rolling_period).mean()
 
         hist['Date'] = hist.index
 
-        hist['Date'] = pd.to_datetime(hist['Date']).dt.strftime('%Y%m')
+        hist['Date'] = pd.to_datetime(hist['Date']).dt.strftime('%Y%m%d')
 
         hist.index = hist['Date']
-        return hist
+
+        return hist.to_dict('index')
 
     def get_current_price(self, ticker):
         instrument = yf.Ticker(ticker)

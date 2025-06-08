@@ -1,0 +1,1 @@
+python .\main.py --mode normal --file normal --deriv_price 105.12 --start_date 20250602 --commit_file True

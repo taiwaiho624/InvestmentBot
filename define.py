@@ -36,6 +36,7 @@ class Event:
         self.action = action
         self.operation_price = operation_price
         self.operation = operation
+        self.cash_in = 0
 
         #account state
         self.target_value = None
@@ -58,11 +59,6 @@ class Event:
         self.deriv_price_open = None
         self.deriv_price_low = None
         
-        #stat
-        self.ytd = 0
-    def set_ytd(self, ytd):
-        self.ytd = ytd
-
     def _format_float(self, number, decimal):
         return round(number, decimal)
     
@@ -77,6 +73,7 @@ class Event:
                   'TP1 Counter', 
                   'TP2 Counter',
                   '等入市-上月高於sma',
+                  '現金投入',
                   'Target',
                   '操作',
                   '總資產',
@@ -109,6 +106,7 @@ class Event:
         result['TP1 Counter'] = account_state_fill
         result['TP2 Counter'] = account_state_fill
         result['等入市-上月高於sma'] = account_state_fill
+        result['現金投入'] = account_state_fill
         result['Target'] = operation_fill
         result['操作'] = operation_fill
         result['總資產'] = stat_fill
@@ -138,6 +136,7 @@ class Event:
         result['TP1 Counter'] = self.tp1_counter
         result['TP2 Counter'] = self.tp2_counter
         result['等入市-上月高於sma'] = self.wait_in_and_previous_is_higher_than_sma
+        result['現金投入'] = self.cash_in
         result['Target'] = self.action.name
         result['操作'] = self.operation
         result['總資產'] = self._format_float(total_value, 2)

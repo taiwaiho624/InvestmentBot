@@ -4,6 +4,7 @@ from utils import *
 import statistics
 from define import *
 import pandas as pd
+from openpyxl import load_workbook
 
 class Stat:
     def __init__(self):
@@ -31,20 +32,17 @@ class Stat:
 
     def dump(self):
         self._get_stat()
-        print(f"Cash Raio Median[{self.median_cash_ratio}] Cash Raio Mean[{self.mean_cash_ratio}] Max YTD Drawdown[{self.max_ytd_drawdown}]")
+        print(f"Cash Raio Median[{self.median_cash_ratio}] Cash Raio Mean[{self.mean_cash_ratio}]")
 
     def _get_stat(self):
         cash_ratio = []
-        ytd = []
         returns = []
-        for date, event in self.events.items():
+        for _, event in self.events.items():
             if event.state == State.WAIT_OUT:
-                cash_ratio.append(event.cash_ratio)
-            ytd.append(event.ytd)
-            returns.append(event.total_return)
+                cash_ratio.append(event.cash / (event.stock + event.cash) * 100)
+            returns.append(event.stock + event.cash)
         self.median_cash_ratio = statistics.median(cash_ratio)
         self.mean_cash_ratio = statistics.mean(cash_ratio)
-        self.max_ytd_drawdown = sorted(ytd)[0]
 
     def add_event(self, event):
         self.events[event.date] = event
@@ -56,11 +54,11 @@ class ValueAverageTradingBot:
         # Algo
         self.underlying_ticker = 'QQQ'
         self.deriv_ticker = 'QLD'
-        self.cash_growth = 1.03 ** (1 / 12)
+        self.cash_growth = 1
         self.buy_in_threshold = 1.04
-        self.growth = 1.22 ** (1 / 12)
-        self.init_cash = 5000
-        self.cash_in_per_month = 1000
+        self.growth = 1.22
+        self.init_cash = 63694
+        self.cash_in_per_month = 0
         self.tp_increment = 0.1        
         self.tp1_max = 10
         self.tp2_max = 3
@@ -87,6 +85,23 @@ class ValueAverageTradingBot:
 
         self.file_name = None
         self.commit_file = False
+
+    def dump_algo_params_to_file(self):
+        wb = load_workbook(self.file_name)
+        sheet = None
+        if 'Parameters' in wb.sheetnames:
+            wb.remove(wb['Parameters'])
+            
+        sheet = wb.create_sheet(title='Parameters')
+        sheet.append(['Underlying', self.underlying_ticker])
+        sheet.append(['Deriv_ticker', self.deriv_ticker])
+        sheet.append(['Cash Growth rate', self.cash_growth])
+        sheet.append(['Deriv Growth rate', self.growth])
+        sheet.append(['Buy in threshold', self.buy_in_threshold])
+        sheet.append(['TP ratio', self.tp_increment])
+        sheet.append(['TP1 Max', self.tp1_max])
+        sheet.append(['TP2 Max', self.tp2_max])
+        wb.save(self.file_name)
 
     def buy(self, number_of_stocks, price):
         self.number_of_stock += number_of_stocks
@@ -141,13 +156,7 @@ class ValueAverageTradingBot:
         self.tp2_counter +=1
         if self.tp2_counter > self.tp2_max:
             self.tp2_counter = self.tp2_max
-    
-    def _adjust_account_per_month(self):
-        if self.state != State.WAIT_IN: 
-            self.target_value += self.cash_in_per_month
-        self.cash += self.cash_in_per_month
-        self.cost += self.cash_in_per_month
-
+            
     def _init_from_file(self):
         try:
             data = pd.read_excel(self.file_name).to_dict(orient='records')[-1]
@@ -162,11 +171,11 @@ class ValueAverageTradingBot:
             self.tp2_counter = data['TP2 Counter']
             self.current_month = get_month_by_day(str(data['日期']))
             self.latest_processed_date = data['日期']
+
+            return True
         except FileNotFoundError:
-            print(f"[E] File {self.file_name} does not exist. Init Account with {self.init_cash}")
-            self.target_value = self.init_cash
-            self.cash = self.init_cash
-            self.cost = self.init_cash
+            print(f"[E] File {self.file_name} does not exist. Exit")
+            return False
 
     def check(self, trading_day, operation_price=None):
         month = get_month_by_day(trading_day)
@@ -191,10 +200,13 @@ class ValueAverageTradingBot:
         event = None
         if month != self.current_month: #first day of a month
             if self.state != State.WAIT_IN:
-                self.target_value = self.target_value * self.growth #Only grow target value when it is above 12 month sma
-                # self.cash = self.cash * self.cash_growth
+                self.target_value = self.target_value * (self.growth ** (1 / 12)) #Only grow target value when it is above 12 month sma
+                self.cash = self.cash * (self.cash_growth ** (1 / 12))
 
-            self._adjust_account_per_month()
+            if self.state != State.WAIT_IN: 
+                self.target_value += self.cash_in_per_month
+            self.cash += self.cash_in_per_month
+            self.cost += self.cash_in_per_month
 
             if self.state == State.WAIT_IN:
                 if underlying_price_open > (previous_month_sma * self.buy_in_threshold):
@@ -227,7 +239,8 @@ class ValueAverageTradingBot:
             if event == None:
                 operation_price = deriv_price_open if operation_price == None else operation_price
                 event = self.action(Action.NO_ACTION, operation_price)
-    
+            event.cash_in = self.cash_in_per_month
+
             self.current_month = month
 
         if self.state == State.WAIT_OUT and underlying_price_low < previous_month_sma:
@@ -268,14 +281,15 @@ class ValueAverageTradingBot:
                 event.to_file(self.file_name)
 
     def normal(self, trading_day, operation_price=None):
-        if self.file_name != None:
-            self._init_from_file()
-        
+        if self._init_from_file() == False:
+            return
+
         if int(self.latest_processed_date) > int(trading_day):
             print(f"[E] Requested date[{trading_day}] is before the latestest processed date[{self.latest_processed_date}]. Exit")
             return
 
         self.check(trading_day, operation_price)
+        self.dump_algo_params_to_file()
 
     def replay(self, start_date, end_date=date.today().strftime('%Y%m%d')):
         self.target_value = self.init_cash
@@ -285,7 +299,7 @@ class ValueAverageTradingBot:
             if int(trading_day) < int(start_date) or int(trading_day) > int(end_date):
                 continue
             
-            self.check(trading_day)
+            self.check(trading_day, 104.25)
 
         self.stat.dump()
-
+        self.dump_algo_params_to_file()

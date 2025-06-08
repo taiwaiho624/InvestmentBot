@@ -18,7 +18,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.file:
-        value_average_trading_bot.file_name = f"{args.file}.xlsx"
+        value_average_trading_bot.file_name = f"output/{args.file}.xlsx"
 
     if args.commit_file:
         value_average_trading_bot.commit_file = True

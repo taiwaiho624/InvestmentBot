@@ -1,8 +1,8 @@
 import datetime as datetime
 from datetime import date
-from utils import *
+from investmentbot.utils import *
 import statistics
-from define import *
+from investmentbot.define import *
 import pandas as pd
 from openpyxl import load_workbook
 

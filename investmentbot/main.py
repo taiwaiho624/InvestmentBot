@@ -1,10 +1,10 @@
-from MarketFeeder import MarketFeeder
-from ValueAverageTradingBot import ValueAverageTradingBot
+from investmentbot.MarketFeeder import MarketFeeder
+from investmentbot.ValueAverageTradingBot import ValueAverageTradingBot
 from datetime import date, timedelta, datetime
 
 import argparse
 
-if __name__ == '__main__':
+def main():
     value_average_trading_bot = ValueAverageTradingBot(MarketFeeder())
 
     parser = argparse.ArgumentParser()
@@ -37,3 +37,6 @@ if __name__ == '__main__':
         while current_date <= today:
             value_average_trading_bot.normal(current_date.strftime('%Y%m%d'))
             current_date += timedelta(days=1)
+
+if __name__ == '__main__':
+    main()

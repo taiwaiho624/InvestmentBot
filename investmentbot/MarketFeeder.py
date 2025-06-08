@@ -1,6 +1,6 @@
 import pandas as pd
 import yfinance as yf
-from utils import *
+from investmentbot.utils import *
 
 class MarketFeeder:
     def __init__(self):

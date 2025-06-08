@@ -1,10 +1,12 @@
 from investmentbot.MarketFeeder import MarketFeeder
 from investmentbot.ValueAverageTradingBot import ValueAverageTradingBot
+import investmentbot.logger
 from datetime import date, timedelta, datetime
 
 import argparse
 
 def main():
+    investmentbot.logger.init("investment_bot")
     value_average_trading_bot = ValueAverageTradingBot(MarketFeeder())
 
     parser = argparse.ArgumentParser()
@@ -18,7 +20,7 @@ def main():
     args = parser.parse_args()
 
     if args.file:
-        value_average_trading_bot.file_name = f"output/{args.file}.xlsx"
+        value_average_trading_bot.file_name = f"{args.file}"
 
     if args.commit_file:
         value_average_trading_bot.commit_file = True

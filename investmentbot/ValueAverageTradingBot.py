@@ -5,6 +5,7 @@ import statistics
 from investmentbot.define import *
 import pandas as pd
 from openpyxl import load_workbook
+import logging
 
 class Stat:
     def __init__(self):
@@ -32,7 +33,7 @@ class Stat:
 
     def dump(self):
         self._get_stat()
-        print(f"Cash Raio Median[{self.median_cash_ratio}] Cash Raio Mean[{self.mean_cash_ratio}]")
+        logging.info(f"Cash Raio Median[{self.median_cash_ratio}] Cash Raio Mean[{self.mean_cash_ratio}]")
 
     def _get_stat(self):
         cash_ratio = []
@@ -174,7 +175,7 @@ class ValueAverageTradingBot:
 
             return True
         except FileNotFoundError:
-            print(f"[E] File {self.file_name} does not exist. Exit")
+            logging.error(f"[E] File {self.file_name} does not exist. Exit")
             return False
 
     def check(self, trading_day, operation_price=None):
@@ -187,7 +188,7 @@ class ValueAverageTradingBot:
             underlying_price_low = self.hist_underlying_day[trading_day]['Low']
             underlying_price_high = self.hist_underlying_day[trading_day]['High']
         except:
-            print(f"[E] {trading_day} is not a trading day")
+            logging.error(f"[E] {trading_day} is not a trading day")
             return
 
         deriv_price_high = self.hist_deriv[trading_day]['High']
@@ -276,7 +277,7 @@ class ValueAverageTradingBot:
             event.deriv_price_low =  deriv_price_low
             self.stat.add_event(event)
 
-            print(event)
+            logging.info(event)
             if self.file_name != None and self.commit_file == True:
                 event.to_file(self.file_name)
 
@@ -285,7 +286,7 @@ class ValueAverageTradingBot:
             return
 
         if int(self.latest_processed_date) > int(trading_day):
-            print(f"[E] Requested date[{trading_day}] is before the latestest processed date[{self.latest_processed_date}]. Exit")
+            logging.error(f"[E] Requested date[{trading_day}] is before the latestest processed date[{self.latest_processed_date}]. Exit")
             return
 
         self.check(trading_day, operation_price)
@@ -299,7 +300,7 @@ class ValueAverageTradingBot:
             if int(trading_day) < int(start_date) or int(trading_day) > int(end_date):
                 continue
             
-            self.check(trading_day, 104.25)
+            self.check(trading_day)
 
         self.stat.dump()
         self.dump_algo_params_to_file()

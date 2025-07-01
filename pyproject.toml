@@ -1,6 +1,6 @@
 [project]
 name = "investmentbot"
-version = "0.1.1"
+version = "0.1.16"
 description = ""
 authors = [
     {name = "taiwaiho624"}
@@ -21,3 +21,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 investmentbot = "investmentbot.main:main"
+feed = "investmentbot.MarketFeeder:main"

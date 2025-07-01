@@ -4,7 +4,7 @@ import os
 
 def init(appName="default"):
     date = datetime.datetime.now().strftime("%Y-%m-%d")
-    dir = "/home/test/investmentbot/log/" + date + "/"
+    dir = "C:\\Users\\taiwa\\OneDrive\\Desktop\\InvestmentBot\\logs\\" + date + "\\"
     os.makedirs(dir, exist_ok=True)
     file_name = dir + datetime.datetime.now().strftime(appName + '_%Y_%m_%d-%H%M%S.log')
     logging.basicConfig(
